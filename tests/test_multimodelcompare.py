@@ -7,6 +7,8 @@ from fmskill import PointObservation, TrackObservation
 from fmskill import Connector
 import fmskill.metrics as mtr
 
+import xarray as xr
+
 plt.rcParams.update({"figure.max_open_warning": 0})
 
 
@@ -318,3 +320,105 @@ def test_mm_plot_timeseries(cc):
     with pytest.raises(ValueError):
         cc["EPL"].plot_timeseries(backend="mpl")
     plt.close("all")
+
+
+def test_model_names_should_be_unique_connector():
+    mr1 = ModelResult(
+        "tests/testdata/SW/HKZN_local_2017_DutchCoast.dfsu",
+        item=0,
+        name="swh",  # explicitly name this modelresult
+    )
+    ds = xr.open_dataset("tests/testdata/SW/ERA5_DutchCoast.nc")
+    da = ds["swh"]
+    mr2 = ModelResult(
+        da
+    )  # No name, so uses default name, which is the same as the one used above, should cause trouble...
+    o1 = PointObservation(
+        "tests/testdata/SW/HKNA_Hm0.dfs0", item=0, x=4.2420, y=52.6887
+    )
+
+    with pytest.raises(LookupError, match="swh"):
+        Connector(obs=o1, mod=[mr1, mr2])
+
+
+def test_mm_df_named_columns(o1):
+
+    import mikeio
+
+    ds1 = mikeio.read("tests/testdata/SW/HKZN_local_2017_DutchCoast.dfsu").isel(
+        element=0
+    )
+    ds2 = mikeio.read("tests/testdata/SW/HKZN_local_2017_DutchCoast_v2.dfsu").isel(
+        element=0
+    )
+    df1 = ds1.to_dataframe()[["Sign. Wave Height"]]
+    df1.columns = ["Model1"]
+
+    df2 = ds2.to_dataframe()[["Sign. Wave Height"]]
+    df2.columns = ["Model2"]
+
+    mmr1 = ModelResult(df1, name="Foo")  # explicit naming
+    assert mmr1.name == "Foo"
+
+    mmr2 = ModelResult(df2)  # implicit name
+    assert mmr2.name == "Model2"
+
+    scon = Connector(o1, mmr1)
+    assert scon.mod_names == ["Foo"]
+
+    con = Connector(o1, [mmr1, mmr2])
+    assert con.mod_names == ["Foo", "Model2"]
+
+    cc = con.extract()
+    assert cc.mod_names == ["Foo", "Model2"]
+
+
+def test_mm_df_nonamed_columns(o1):
+
+    import mikeio
+
+    ds1 = mikeio.read("tests/testdata/SW/HKZN_local_2017_DutchCoast.dfsu").isel(
+        element=0
+    )
+    ds2 = mikeio.read("tests/testdata/SW/HKZN_local_2017_DutchCoast_v2.dfsu").isel(
+        element=0
+    )
+    df1 = ds1.to_dataframe()
+    df2 = ds2.to_dataframe()
+
+    mmr1 = ModelResult(df1, item="Sign. Wave Height")
+    assert mmr1.name == "Sign. Wave Height"
+    mmr2 = ModelResult(df2, item="Sign. Wave Height")
+    assert mmr2.name == "Sign. Wave Height"
+
+    with pytest.raises(Exception, match="unique"):
+        Connector(o1, [mmr1, mmr2])
+
+
+def test_mm_df_default_columns(o1):
+
+    import mikeio
+
+    ds1 = mikeio.read("tests/testdata/SW/HKZN_local_2017_DutchCoast.dfsu").isel(
+        element=0
+    )
+    ds2 = mikeio.read("tests/testdata/SW/HKZN_local_2017_DutchCoast_v2.dfsu").isel(
+        element=0
+    )
+    df1 = ds1.to_dataframe()
+    df2 = ds2.to_dataframe()
+
+    mmr1 = ModelResult(df1, item="Sign. Wave Height", name="Foo")
+    assert mmr1.name == "Foo"
+
+    mmr2 = ModelResult(df2, item="Sign. Wave Height", name="Bar")
+    assert mmr2.name == "Bar"
+
+    scon = Connector(o1, mmr2)
+    assert scon.mod_names == ["Bar"]
+
+    con = Connector(o1, [mmr1, mmr2])
+    assert con.mod_names == ["Foo", "Bar"]
+
+    cc = con.extract()
+    assert cc.mod_names == ["Foo", "Bar"]
